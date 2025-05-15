@@ -9,18 +9,21 @@ import (
 	"server-monitor/collectors"
 
 	"github.com/shirou/gopsutil/v3/mem"
+	"go.uber.org/zap"
 )
 
 // MemoryCollector implements the Collector interface for memory monitoring
 type MemoryCollector struct {
 	thresholdPercent float64
 	collectorName    string
+	logger           *zap.Logger
 }
 
 // NewMemoryCollector creates a new memory collector
-func NewMemoryCollector() *MemoryCollector {
+func NewMemoryCollector(logger *zap.Logger) *MemoryCollector {
 	return &MemoryCollector{
 		collectorName: "memory",
+		logger:        logger,
 	}
 }
 
@@ -55,7 +58,8 @@ func (c *MemoryCollector) Collect(ctx context.Context) ([]collectors.Result, err
 	// Get memory stats
 	memStats, err := mem.VirtualMemory()
 	if err != nil {
-		return nil, fmt.Errorf("failed to get memory stats: %w", err)
+		c.logger.Error("Failed to get memory stats", zap.Error(err))
+		return nil, err
 	}
 
 	// Calculate memory usage
@@ -104,6 +108,7 @@ func (c *MemoryCollector) Collect(ctx context.Context) ([]collectors.Result, err
 		result.Message = message
 	}
 
+	c.logger.Info("Memory metrics collected", zap.Any("result", result))
 	return []collectors.Result{result}, nil
 }
 

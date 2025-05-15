@@ -6,6 +6,7 @@ import (
 	"os"
 	"time"
 
+	"go.uber.org/zap"
 	"gopkg.in/yaml.v3"
 )
 
@@ -45,31 +46,35 @@ type EmailConfig struct {
 }
 
 // LoadConfig loads the configuration from the specified file path
-func LoadConfig(path string) (*Config, error) {
+func LoadConfig(logger *zap.Logger, path string) (*Config, error) {
 	// Read configuration file
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("error reading config file: %w", err)
+		logger.Error("Error reading config file", zap.String("path", path), zap.Error(err))
+		return nil, err
 	}
 
 	// Parse configuration
 	var config Config
 	if err := yaml.Unmarshal(data, &config); err != nil {
-		return nil, fmt.Errorf("error parsing config file: %w", err)
+		logger.Error("Error parsing config file", zap.String("path", path), zap.Error(err))
+		return nil, err
 	}
 
 	// Validate configuration
-	if err := validateConfig(&config); err != nil {
-		return nil, fmt.Errorf("invalid configuration: %w", err)
+	if err := validateConfig(logger.Named("validate"), &config); err != nil {
+		logger.Error("Invalid configuration", zap.String("path", path), zap.Error(err))
+		return nil, err
 	}
 
 	return &config, nil
 }
 
 // validateConfig performs basic validation on the configuration
-func validateConfig(config *Config) error {
+func validateConfig(logger *zap.Logger, config *Config) error {
 	// Ensure we have a valid default interval
 	if config.Monitor.DefaultIntervalSeconds <= 0 {
+		logger.Error("Invalid default interval", zap.Int("default_interval_seconds", config.Monitor.DefaultIntervalSeconds))
 		return fmt.Errorf("monitor.default_interval_seconds must be greater than 0")
 	}
 
@@ -84,15 +89,19 @@ func validateConfig(config *Config) error {
 	// Validate email configuration if enabled
 	if config.Notifications.Email.Enabled {
 		if config.Notifications.Email.From == "" {
+			logger.Error("Email 'from' address is empty")
 			return fmt.Errorf("email notification enabled but 'from' address is empty")
 		}
 		if len(config.Notifications.Email.To) == 0 {
+			logger.Error("Email 'to' addresses are empty")
 			return fmt.Errorf("email notification enabled but 'to' addresses are empty")
 		}
 		if config.Notifications.Email.SMTPServer == "" {
+			logger.Error("Email SMTP server is empty")
 			return fmt.Errorf("email notification enabled but 'smtp_server' is empty")
 		}
 		if config.Notifications.Email.SMTPPort <= 0 {
+			logger.Error("Email SMTP port is invalid")
 			return fmt.Errorf("email notification enabled but 'smtp_port' is invalid")
 		}
 	}

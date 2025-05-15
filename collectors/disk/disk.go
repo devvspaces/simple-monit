@@ -9,6 +9,7 @@ import (
 
 	"server-monitor/collectors"
 
+	"go.uber.org/zap"
 	"golang.org/x/sys/unix"
 )
 
@@ -16,6 +17,7 @@ import (
 type DiskCollector struct {
 	paths         []PathConfig
 	collectorName string
+	logger        *zap.Logger
 }
 
 // PathConfig represents the configuration for a single disk path to monitor
@@ -26,9 +28,10 @@ type PathConfig struct {
 }
 
 // NewDiskCollector creates a new disk space collector
-func NewDiskCollector() *DiskCollector {
+func NewDiskCollector(logger *zap.Logger) *DiskCollector {
 	return &DiskCollector{
 		collectorName: "disk_space",
+		logger:        logger,
 	}
 }
 
@@ -42,31 +45,40 @@ func (c *DiskCollector) Init(settings map[string]interface{}) error {
 	// Get paths array from settings
 	pathsRaw, ok := settings["paths"]
 	if !ok {
-		return fmt.Errorf("missing 'paths' configuration for disk collector")
+		err := fmt.Errorf("missing 'paths' configuration for disk collector")
+		c.logger.Error("Init error", zap.Error(err))
+		return err
 	}
 
 	// Convert paths to the correct type
 	pathsArray, ok := pathsRaw.([]interface{})
 	if !ok {
-		return fmt.Errorf("'paths' should be an array")
+		err := fmt.Errorf("'paths' should be an array")
+		c.logger.Error("Init error", zap.Error(err))
+		return err
 	}
 
 	// Process each path configuration
 	for _, pathRaw := range pathsArray {
 		pathMap, ok := pathRaw.(map[string]interface{})
 		if !ok {
-			return fmt.Errorf("each path should be an object")
+			err := fmt.Errorf("each path should be an object")
+			c.logger.Error("Init error", zap.Error(err))
+			return err
 		}
 
 		path, ok := pathMap["path"].(string)
 		if !ok {
-			return fmt.Errorf("path must be a string")
+			err := fmt.Errorf("path must be a string")
+			c.logger.Error("Init error", zap.Error(err))
+			return err
 		}
 
 		// Resolve path to absolute path
 		absPath, err := filepath.Abs(path)
 		if err != nil {
-			return fmt.Errorf("could not resolve path %s: %w", path, err)
+			err := fmt.Errorf("could not resolve path %s: %w", path, err)
+			c.logger.Error("Init error", zap.Error(err))
 		}
 
 		// Default thresholds if not provided
@@ -88,7 +100,9 @@ func (c *DiskCollector) Init(settings map[string]interface{}) error {
 	}
 
 	if len(c.paths) == 0 {
-		return fmt.Errorf("no valid paths configured for disk collector")
+		err := fmt.Errorf("no valid paths configured for disk collector")
+		c.logger.Error("Init error", zap.Error(err))
+		return err
 	}
 
 	return nil
@@ -110,7 +124,8 @@ func (c *DiskCollector) Collect(ctx context.Context) ([]collectors.Result, error
 		// Get disk usage stats
 		var stat unix.Statfs_t
 		if err := unix.Statfs(path.Path, &stat); err != nil {
-			return results, fmt.Errorf("failed to get disk stats for %s: %w", path.Path, err)
+			c.logger.Error("Failed to get disk stats", zap.String("path", path.Path), zap.Error(err))
+			return results, err
 		}
 
 		// Calculate disk usage metrics
@@ -186,8 +201,7 @@ func (c *DiskCollector) Collect(ctx context.Context) ([]collectors.Result, error
 		results = append(results, result)
 	}
 
-	fmt.Printf("Collected disk metrics: %v\n", results)
-
+	c.logger.Info("Collected disk metrics", zap.Any("results", results))
 	return results, nil
 }
 

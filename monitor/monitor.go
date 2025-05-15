@@ -15,6 +15,8 @@ import (
 	"server-monitor/config"
 	"server-monitor/notifiers"
 	"server-monitor/notifiers/email"
+
+	"go.uber.org/zap"
 )
 
 // MonitorService is the main service that orchestrates collectors and notifiers
@@ -23,6 +25,7 @@ type MonitorService struct {
 	collectorRegistry *collectors.Registry
 	notifierRegistry  *notifiers.Registry
 	collectorTasks    map[string]context.CancelFunc
+	logger            *zap.Logger
 	wg                sync.WaitGroup
 	ctx               context.Context
 	cancel            context.CancelFunc
@@ -30,55 +33,61 @@ type MonitorService struct {
 }
 
 // NewMonitorService creates a new monitoring service
-func NewMonitorService(cfg *config.Config) *MonitorService {
+func NewMonitorService(logger *zap.Logger, cfg *config.Config) *MonitorService {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	return &MonitorService{
 		config:            cfg,
-		collectorRegistry: collectors.NewRegistry(),
-		notifierRegistry:  notifiers.NewRegistry(),
+		collectorRegistry: collectors.NewRegistry(logger.Named("collectorRegistry")),
+		notifierRegistry:  notifiers.NewRegistry(logger.Named("notifierRegistry")),
 		collectorTasks:    make(map[string]context.CancelFunc),
 		ctx:               ctx,
 		cancel:            cancel,
+		logger:            logger,
 	}
 }
 
 // Start initializes and starts the monitoring service
 func (s *MonitorService) Start() error {
-	log.Println("Initializing monitoring service...")
+	s.logger.Info("Initializing monitoring service...")
 
 	// Register collectors
 	if err := s.registerCollectors(); err != nil {
-		return fmt.Errorf("failed to register collectors: %w", err)
+		s.logger.Error("Failed to register collectors", zap.Error(err))
+		return err
 	}
 
 	// Register notifiers
 	if err := s.registerNotifiers(); err != nil {
-		return fmt.Errorf("failed to register notifiers: %w", err)
+		s.logger.Error("Failed to register notifiers", zap.Error(err))
+		return err
 	}
 
 	// Initialize enabled collectors
 	if err := s.initializeCollectors(); err != nil {
-		return fmt.Errorf("failed to initialize collectors: %w", err)
+		s.logger.Error("Failed to initialize collectors", zap.Error(err))
+		return err
 	}
 
 	// Initialize enabled notifiers
 	if err := s.initializeNotifiers(); err != nil {
-		return fmt.Errorf("failed to initialize notifiers: %w", err)
+		s.logger.Error("Failed to initialize notifiers", zap.Error(err))
+		return err
 	}
 
 	// Start collector tasks
 	if err := s.startCollectorTasks(); err != nil {
-		return fmt.Errorf("failed to start collector tasks: %w", err)
+		s.logger.Error("Failed to start collector tasks", zap.Error(err))
+		return err
 	}
 
-	log.Println("Monitoring service started successfully")
+	s.logger.Info("Monitoring service started successfully")
 	return nil
 }
 
 // Stop gracefully stops the monitoring service
 func (s *MonitorService) Stop() {
-	log.Println("Stopping monitoring service...")
+	s.logger.Info("Stopping monitoring service...")
 
 	// Cancel main context to signal all tasks to stop
 	s.cancel()
@@ -89,43 +98,44 @@ func (s *MonitorService) Stop() {
 	// Clean up collectors
 	for _, c := range s.collectorRegistry.GetAll() {
 		if err := c.Cleanup(); err != nil {
-			log.Printf("Error cleaning up collector %s: %v", c.Name(), err)
+			s.logger.Error("Error cleaning up collector", zap.String("collector", c.Name()), zap.Error(err))
 		}
 	}
 
 	// Clean up notifiers
 	for _, n := range s.notifierRegistry.GetAll() {
 		if err := n.Close(); err != nil {
-			log.Printf("Error closing notifier %s: %v", n.Name(), err)
+			s.logger.Error("Error closing notifier", zap.String("notifier", n.Name()), zap.Error(err))
 		}
 	}
 
-	log.Println("Monitoring service stopped")
+	s.logger.Info("Monitoring service stopped")
 }
 
 // registerCollectors registers all available collectors
 func (s *MonitorService) registerCollectors() error {
 	// Register disk space collector
-	if err := s.collectorRegistry.Register(disk.NewDiskCollector()); err != nil {
-		return fmt.Errorf("failed to register disk collector: %w", err)
+	if err := s.collectorRegistry.Register(disk.NewDiskCollector(s.logger.Named("diskCollector"))); err != nil {
+		s.logger.Error("Failed to register disk collector", zap.Error(err))
+		return err
 	}
 
 	// Register memory collector
-	if err := s.collectorRegistry.Register(memory.NewMemoryCollector()); err != nil {
-		return fmt.Errorf("failed to register memory collector: %w", err)
+	if err := s.collectorRegistry.Register(memory.NewMemoryCollector(s.logger.Named("memoryCollector"))); err != nil {
+		s.logger.Error("Failed to register memory collector", zap.Error(err))
+		return err
 	}
 
-	// Register other collectors here...
-
-	log.Printf("Registered collectors: %v", s.collectorRegistry.CollectorNames())
+	s.logger.Info("Registered collectors", zap.Strings("collectors", s.collectorRegistry.CollectorNames()))
 	return nil
 }
 
 // registerNotifiers registers all available notifiers
 func (s *MonitorService) registerNotifiers() error {
 	// Register email notifier
-	if err := s.notifierRegistry.Register(email.NewEmailNotifier()); err != nil {
-		return fmt.Errorf("failed to register email notifier: %w", err)
+	if err := s.notifierRegistry.Register(email.NewEmailNotifier(s.logger.Named("emailNotifier"))); err != nil {
+		s.logger.Error("Failed to register email notifier", zap.Error(err))
+		return err
 	}
 
 	// Register other notifiers here...
@@ -138,13 +148,13 @@ func (s *MonitorService) registerNotifiers() error {
 func (s *MonitorService) initializeCollectors() error {
 	for name, collectorCfg := range s.config.Collectors {
 		if !collectorCfg.Enabled {
-			log.Printf("Collector %s is disabled, skipping", name)
+			s.logger.Debug("Collector is disabled, skipping", zap.String("collector", name))
 			continue
 		}
 
 		collector, exists := s.collectorRegistry.Get(name)
 		if !exists {
-			log.Printf("Collector %s is enabled but not registered, skipping", name)
+			s.logger.Error("Collector is enabled but not registered", zap.String("collector", name))
 			continue
 		}
 
@@ -154,7 +164,8 @@ func (s *MonitorService) initializeCollectors() error {
 		}
 
 		if err := collector.Init(settings); err != nil {
-			return fmt.Errorf("failed to initialize collector %s: %w", name, err)
+			s.logger.Error("Failed to initialize collector", zap.String("collector", name), zap.Error(err))
+			return err
 		}
 
 		log.Printf("Collector %s initialized", name)
@@ -185,10 +196,11 @@ func (s *MonitorService) initializeNotifiers() error {
 		}
 
 		if err := notifier.Init(config); err != nil {
-			return fmt.Errorf("failed to initialize email notifier: %w", err)
+			s.logger.Error("Failed to initialize email notifier", zap.Error(err))
+			return err
 		}
 
-		log.Println("Email notifier initialized")
+		s.logger.Info("Email notifier initialized")
 	}
 
 	return nil
@@ -208,15 +220,19 @@ func (s *MonitorService) startCollectorTasks() error {
 
 		interval := s.config.GetCollectorInterval(name)
 		if interval <= 0 {
-			return fmt.Errorf("invalid interval for collector %s", name)
+			err := fmt.Errorf("invalid interval for collector %s", name)
+			s.logger.Error("Invalid collector interval", zap.String("collector", name), zap.Error(err))
+			return err
 		}
 
 		// Start collector task
 		if err := s.startCollectorTask(collector, interval); err != nil {
-			return fmt.Errorf("failed to start collector task %s: %w", name, err)
+			err := fmt.Errorf("failed to start collector task %s: %w", name, err)
+			s.logger.Error("Failed to start collector task", zap.String("collector", name), zap.Error(err))
+			return err
 		}
 
-		log.Printf("Collector task %s started with interval %s", name, interval)
+		s.logger.Info("Collector task started", zap.String("collector", name), zap.Duration("interval", interval))
 	}
 
 	return nil
@@ -266,7 +282,8 @@ func (s *MonitorService) runCollector(ctx context.Context, collector collectors.
 	// Collect metrics
 	results, err := collector.Collect(collectionCtx)
 	if err != nil {
-		return fmt.Errorf("collection failed: %w", err)
+		s.logger.Error("Failed to collect metrics", zap.String("collector", collector.Name()), zap.Error(err))
+		return err
 	}
 
 	// Process results
@@ -320,6 +337,7 @@ func (s *MonitorService) sendNotifications(ctx context.Context, results []collec
 		for i, err := range errs {
 			errStrings[i] = err.Error()
 		}
+		s.logger.Error("Notification errors", zap.Strings("errors", errStrings))
 		return fmt.Errorf("notification errors: %v", errStrings)
 	}
 

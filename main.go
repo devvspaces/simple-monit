@@ -3,7 +3,6 @@ package main
 
 import (
 	"flag"
-	"fmt"
 	"log"
 	"os"
 	"os/signal"
@@ -28,15 +27,16 @@ func main() {
 	defer logger.Sync()
 
 	// Load configuration
-	cfg, err := config.LoadConfig(*configPath)
+	cfg, err := config.LoadConfig(logger.Named("config"), *configPath)
 	if err != nil {
 		log.Fatalf("Failed to load configuration: %v", err)
 	}
 
 	// Create and start the monitoring service
-	monitorService := monitor.NewMonitorService(cfg)
+	monitorService := monitor.NewMonitorService(logger.Named("monitor"), cfg)
 	if err := monitorService.Start(); err != nil {
-		log.Fatalf("Failed to start monitoring service: %v", err)
+		logger.Error("Failed to start monitoring service", zap.Error(err))
+		panic(err)
 	}
 
 	// Handle graceful shutdown
@@ -45,9 +45,9 @@ func main() {
 
 	// Wait for termination signal
 	sig := <-sigChan
-	fmt.Printf("\nReceived signal %v, shutting down...\n", sig)
+	logger.Info("Received signal, shutting down", zap.String("signal", sig.String()))
 
 	// Stop the monitoring service
 	monitorService.Stop()
-	log.Println("Server monitoring system stopped")
+	logger.Info("Monitoring service stopped")
 }

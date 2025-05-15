@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"server-monitor/collectors"
+
+	"go.uber.org/zap"
 )
 
 // EmailNotifier implements the Notifier interface for email notifications
@@ -20,11 +22,14 @@ type EmailNotifier struct {
 	username   string
 	password   string
 	auth       smtp.Auth
+	logger     *zap.Logger
 }
 
 // NewEmailNotifier creates a new email notifier
-func NewEmailNotifier() *EmailNotifier {
-	return &EmailNotifier{}
+func NewEmailNotifier(logger *zap.Logger) *EmailNotifier {
+	return &EmailNotifier{
+		logger: logger,
+	}
 }
 
 // Name returns the name of the notifier
@@ -38,35 +43,47 @@ func (n *EmailNotifier) Init(config map[string]interface{}) error {
 
 	// Get from address
 	if n.from, ok = config["from"].(string); !ok {
-		return fmt.Errorf("missing 'from' in email config")
+		err := fmt.Errorf("missing 'from' in email config")
+		n.logger.Error("Failed to initialize email notifier", zap.Error(err))
+		return err
 	}
 
 	// Get to addresses
 	_, exists := config["to"]
 	if !exists {
-		return fmt.Errorf("missing 'to' in email config")
+		err := fmt.Errorf("missing 'to' in email config")
+		n.logger.Error("Failed to initialize email notifier", zap.Error(err))
+		return err
 	}
 
 	toRaw, ok := config["to"].([]string)
 	if !ok {
-		return fmt.Errorf("'to' field must be an array of email addresses")
+		err := fmt.Errorf("'to' field must be an array of email addresses")
+		n.logger.Error("Failed to initialize email notifier", zap.Error(err))
+		return err
 	}
 
 	n.to = append(n.to, toRaw...)
 
 	if len(n.to) == 0 {
-		return fmt.Errorf("no valid 'to' addresses in email config")
+		err := fmt.Errorf("no valid 'to' addresses in email config")
+		n.logger.Error("Failed to initialize email notifier", zap.Error(err))
+		return err
 	}
 
 	// Get SMTP server
 	if n.smtpServer, ok = config["smtp_server"].(string); !ok {
-		return fmt.Errorf("missing 'smtp_server' in email config")
+		err := fmt.Errorf("missing 'smtp_server' in email config")
+		n.logger.Error("Failed to initialize email notifier", zap.Error(err))
+		return err
 	}
 
 	// Get SMTP port
 	portRaw, ok := config["smtp_port"].(int)
 	if !ok {
-		return fmt.Errorf("missing 'smtp_port' in email config")
+		err := fmt.Errorf("missing 'smtp_port' in email config")
+		n.logger.Error("Failed to initialize email notifier", zap.Error(err))
+		return err
 	}
 	n.smtpPort = portRaw
 
@@ -136,42 +153,56 @@ func (n *EmailNotifier) Notify(ctx context.Context, results []collectors.Result)
 		// Connect to the server
 		client, err := smtp.Dial(addr)
 		if err != nil {
-			return fmt.Errorf("failed to connect to SMTP server: %w", err)
+			err := fmt.Errorf("failed to connect to SMTP server: %w", err)
+			n.logger.Error("Failed to send email", zap.Error(err))
+			return err
 		}
 		defer client.Close()
 
 		// Set the sender and recipients
 		if err := client.Mail(n.from); err != nil {
-			return fmt.Errorf("failed to set sender: %w", err)
+			err := fmt.Errorf("failed to set sender: %w", err)
+			n.logger.Error("Failed to send email", zap.Error(err))
+			return err
 		}
 
 		for _, addr := range n.to {
 			if err := client.Rcpt(addr); err != nil {
-				return fmt.Errorf("failed to set recipient: %w", err)
+				err := fmt.Errorf("failed to set recipient: %w", err)
+				n.logger.Error("Failed to send email", zap.Error(err))
+				return err
 			}
 		}
 
 		// Send the email body
 		w, err := client.Data()
 		if err != nil {
-			return fmt.Errorf("failed to start email data: %w", err)
+			err := fmt.Errorf("failed to start email data: %w", err)
+			n.logger.Error("Failed to send email", zap.Error(err))
+			return err
 		}
 
 		_, err = w.Write([]byte(message))
 		if err != nil {
-			return fmt.Errorf("failed to write email body: %w", err)
+			err := fmt.Errorf("failed to write email body: %w", err)
+			n.logger.Error("Failed to send email", zap.Error(err))
+			return err
 		}
 
 		err = w.Close()
 		if err != nil {
-			return fmt.Errorf("failed to close email data: %w", err)
+			err := fmt.Errorf("failed to close email data: %w", err)
+			n.logger.Error("Failed to send email", zap.Error(err))
+			return err
 		}
 
 		_ = client.Quit()
 	}
 
 	if err != nil {
-		return fmt.Errorf("failed to send email: %w", err)
+		err := fmt.Errorf("failed to send email: %w", err)
+		n.logger.Error("Failed to send email", zap.Error(err))
+		return err
 	}
 
 	return nil

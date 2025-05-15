@@ -4,18 +4,22 @@ package collectors
 import (
 	"fmt"
 	"sync"
+
+	"go.uber.org/zap"
 )
 
 // Registry manages the available collectors
 type Registry struct {
 	collectors map[string]Collector
 	mu         sync.RWMutex
+	logger     *zap.Logger
 }
 
 // NewRegistry creates a new collector registry
-func NewRegistry() *Registry {
+func NewRegistry(logger *zap.Logger) *Registry {
 	return &Registry{
 		collectors: make(map[string]Collector),
+		logger:     logger,
 	}
 }
 
@@ -26,11 +30,15 @@ func (r *Registry) Register(collector Collector) error {
 
 	name := collector.Name()
 	if name == "" {
-		return fmt.Errorf("collector has empty name")
+		err := fmt.Errorf("collector has empty name")
+		r.logger.Error("Failed to register collector", zap.Error(err))
+		return err
 	}
 
 	if _, exists := r.collectors[name]; exists {
-		return fmt.Errorf("collector with name '%s' already registered", name)
+		err := fmt.Errorf("collector with name '%s' already registered", name)
+		r.logger.Error("Failed to register collector", zap.Error(err))
+		return err
 	}
 
 	r.collectors[name] = collector

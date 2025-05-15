@@ -4,18 +4,22 @@ package notifiers
 import (
 	"fmt"
 	"sync"
+
+	"go.uber.org/zap"
 )
 
 // Registry manages the available notifiers
 type Registry struct {
 	notifiers map[string]Notifier
 	mu        sync.RWMutex
+	logger    *zap.Logger
 }
 
 // NewRegistry creates a new notifier registry
-func NewRegistry() *Registry {
+func NewRegistry(logger *zap.Logger) *Registry {
 	return &Registry{
 		notifiers: make(map[string]Notifier),
+		logger:    logger,
 	}
 }
 
@@ -26,11 +30,15 @@ func (r *Registry) Register(notifier Notifier) error {
 
 	name := notifier.Name()
 	if name == "" {
-		return fmt.Errorf("notifier has empty name")
+		err := fmt.Errorf("notifier has empty name")
+		r.logger.Error("Failed to register notifier", zap.Error(err))
+		return err
 	}
 
 	if _, exists := r.notifiers[name]; exists {
-		return fmt.Errorf("notifier with name '%s' already registered", name)
+		err := fmt.Errorf("notifier with name '%s' already registered", name)
+		r.logger.Error("Failed to register notifier", zap.Error(err))
+		return err
 	}
 
 	r.notifiers[name] = notifier
